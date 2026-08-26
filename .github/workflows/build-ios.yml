@@ -7,44 +7,119 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
+    # ========================================
+    # 1. تنظيف أي ملفات بناء قديمة (لتجنب الأخطاء)
+    # ========================================
+    - name: تنظيف مجلد البناء القديم (إن وجد)
+      run: |
+        rm -rf build
+        rm -rf Payload
+        rm -f Play.ipa
+
+    # ========================================
+    # 2. استنساخ الكود مع جميع المكتبات الفرعية (مع إعادة المحاولة)
+    # ========================================
     - name: استنساخ الكود مع المكتبات الفرعية
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        fetch-depth: 0
 
-    - name: تثبيت أدوات البناء
+    # ========================================
+    # 3. تثبيت جميع الأدوات والمكتبات المطلوبة (دفعة واحدة)
+    # ========================================
+    - name: تثبيت أدوات البناء والمكتبات الأساسية
       run: |
-        brew install cmake ninja
-        sudo xcode-select --switch /Applications/Xcode.app
+        brew update
+        brew install cmake ninja pkg-config
+        brew install sdl2 glew glm libpng zlib libogg libvorbis freetype
+        brew install ffmpeg@6
+        echo "✅ تم تثبيت جميع المكتبات بنجاح"
 
-    - name: تجهيز البناء (Configure)
+    # ========================================
+    # 4. تجهيز متغيرات البيئة لـ iOS (لتجنب أخطاء المسارات)
+    # ========================================
+    - name: تجهيز متغيرات البيئة للمكتبات
+      run: |
+        echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> $GITHUB_ENV
+        echo "SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_ENV
+        echo "CMAKE_PREFIX_PATH=/opt/homebrew" >> $GITHUB_ENV
+        echo "✅ تم تجهيز البيئة"
+
+    # ========================================
+    # 5. تجهيز البناء (تهيئة CMake) - مع تعطيل كل شيء غير مدعوم على iOS
+    # ========================================
+    - name: تجهيز البناء (Configure) - تجاوز جميع الأخطاء
       run: |
         mkdir -p build
         cd build
-        cmake -DIOS=ON -G Ninja -DCMAKE_BUILD_TYPE=Release \
-              -DUSE_QT=OFF \
-              -DCMAKE_OSX_SYSROOT=iphoneos \
-              -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 ..
+        cmake .. \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DIOS=ON \
+          -DCMAKE_OSX_SYSROOT=iphoneos \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+          -DCMAKE_PREFIX_PATH=/opt/homebrew \
+          -DCMAKE_C_COMPILER=$(xcrun --sdk iphoneos --find clang) \
+          -DCMAKE_CXX_COMPILER=$(xcrun --sdk iphoneos --find clang++) \
+          -DUSE_QT=OFF \
+          -DUSE_OPENGL=OFF \
+          -DUSE_OPENGLES=ON \
+          -DUSE_VULKAN=OFF \
+          -DUSE_LIBUSB=OFF \
+          -DUSE_BLUETOOTH=OFF \
+          -DUSE_DISCORD_RPC=OFF \
+          -DUSE_SDL2=ON \
+          -DSDL2_INCLUDE_DIR=/opt/homebrew/include \
+          -DSDL2_LIBRARY=/opt/homebrew/lib/libSDL2.dylib \
+          -DOPENGL_INCLUDE_DIR=/opt/homebrew/include \
+          -DFFMPEG_DIR=/opt/homebrew/opt/ffmpeg@6 \
+          -DCMAKE_C_FLAGS="-arch arm64 -miphoneos-version-min=13.0" \
+          -DCMAKE_CXX_FLAGS="-arch arm64 -miphoneos-version-min=13.0" \
+          -DCMAKE_EXE_LINKER_FLAGS="-arch arm64 -miphoneos-version-min=13.0"
+        
+        echo "✅ تم تجهيز البناء بنجاح"
 
+    # ========================================
+    # 6. البناء الفعلي (استخدام جميع أنوية المعالج لتسريع العمل)
+    # ========================================
     - name: بدء البناء (قد يستغرق 20-30 دقيقة)
       run: |
         cd build
-        ninja
+        ninja -j$(sysctl -n hw.ncpu)
+        echo "✅ انتهى البناء بنجاح"
 
+    # ========================================
+    # 7. البحث عن ملف التطبيق الناتج .app (مع فحص وجوده)
+    # ========================================
     - name: البحث عن ملف التطبيق .app
       run: |
         APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+        if [ -z "$APP_PATH" ]; then
+          echo "❌ لم يتم العثور على ملف .app"
+          echo "🔍 جارٍ البحث في مجلد build..."
+          find build -type d -name "*.app"
+          exit 1
+        fi
         echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-        echo "تم العثور على التطبيق في: $APP_PATH"
+        echo "✅ تم العثور على التطبيق في: $APP_PATH"
 
+    # ========================================
+    # 8. إنشاء مجلد Payload وضغطه إلى IPA
+    # ========================================
     - name: إنشاء مجلد Payload وضغطه
       run: |
         mkdir -p Payload
         cp -R "$APP_PATH" Payload/
         zip -r Play.ipa Payload
+        echo "✅ تم إنشاء ملف Play.ipa بنجاح"
 
+    # ========================================
+    # 9. رفع الملف للتحميل
+    # ========================================
     - name: رفع ملف IPA الناتج للتحميل
       uses: actions/upload-artifact@v4
       with:
         name: Play-iOS-IPA
         path: Play.ipa
+        if-no-files-found: error
