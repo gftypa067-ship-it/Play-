@@ -7,58 +7,49 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-    # ========================================
-    # 1. تنظيف أي ملفات بناء قديمة
-    # ========================================
+    # تنظيف البناء القديم
     - name: تنظيف مجلد البناء القديم
       run: |
         rm -rf build
         rm -rf Payload
         rm -f Play.ipa
 
-    # ========================================
-    # 2. استنساخ الكود مع جميع المكتبات الفرعية
-    # ========================================
+    # استنساخ الكود مع المكتبات الفرعية
     - name: استنساخ الكود مع المكتبات الفرعية
       uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 0
 
-    # ========================================
-    # 3. تثبيت جميع الأدوات والمكتبات المطلوبة
-    # ========================================
+    # تثبيت الأدوات والمكتبات
     - name: تثبيت أدوات البناء والمكتبات الأساسية
       run: |
         brew update
         brew install cmake ninja pkg-config
         brew install sdl2 glew glm libpng zlib libogg libvorbis freetype
         brew install ffmpeg@6
-        echo "✅ تم تثبيت جميع المكتبات بنجاح"
+        echo "✅ تم تثبيت جميع المكتبات"
 
-    # ========================================
-    # 4. تجهيز متغيرات البيئة للمكتبات
-    # ========================================
-    - name: تجهيز متغيرات البيئة للمكتبات
+    # تجهيز متغيرات البيئة
+    - name: تجهيز متغيرات البيئة
       run: |
         echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> $GITHUB_ENV
         echo "SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_ENV
         echo "CMAKE_PREFIX_PATH=/opt/homebrew" >> $GITHUB_ENV
-        echo "✅ تم تجهيز البيئة"
 
-    # ========================================
-    # 5. تعديل CMakeLists.txt لإزالة مجلد ui_qt (الحل الجذري)
-    # ========================================
-    - name: تعطيل بناء واجهة Qt في المشروع
+    # =============================================
+    # 🔥 الحل الجذري: حذف مجلد ui_qt بالكامل من البناء
+    # =============================================
+    - name: تعطيل واجهة Qt عن طريق تعديل CMakeLists.txt
       run: |
-        # حذف السطر الذي يضيف مجلد ui_qt من البناء
-        sed -i '' '/add_subdirectory(Source\/ui_qt)/d' CMakeLists.txt
-        echo "✅ تم تعطيل مجلد ui_qt من البناء"
+        # حذف السطر الذي يحتوي على "ui_qt" من الملف الرئيسي
+        sed -i '' '/ui_qt/d' CMakeLists.txt
+        # حذف مجلد ui_qt نفسه (احتياطي)
+        rm -rf Source/ui_qt
+        echo "✅ تم حذف مجلد ui_qt وتعطيله نهائياً"
 
-    # ========================================
-    # 6. تجهيز البناء مع تعطيل كل شيء متعلق بـ Qt
-    # ========================================
-    - name: تجهيز البناء (Configure) - تجاوز جميع الأخطاء
+    # تجهيز البناء مع تعطيل Qt بكل الطرق الممكنة
+    - name: تجهيز البناء (Configure)
       run: |
         mkdir -p build
         cd build
@@ -72,9 +63,10 @@ jobs:
           -DCMAKE_C_COMPILER=$(xcrun --sdk iphoneos --find clang) \
           -DCMAKE_CXX_COMPILER=$(xcrun --sdk iphoneos --find clang++) \
           -DUSE_QT=OFF \
-          -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE \
           -DENABLE_QT=OFF \
           -DBUILD_QT_UI=OFF \
+          -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE \
+          -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE \
           -DUSE_OPENGL=OFF \
           -DUSE_OPENGLES=ON \
           -DUSE_VULKAN=OFF \
@@ -89,47 +81,37 @@ jobs:
           -DCMAKE_C_FLAGS="-arch arm64 -miphoneos-version-min=13.0" \
           -DCMAKE_CXX_FLAGS="-arch arm64 -miphoneos-version-min=13.0" \
           -DCMAKE_EXE_LINKER_FLAGS="-arch arm64 -miphoneos-version-min=13.0"
-        
-        echo "✅ تم تجهيز البناء بنجاح"
+        echo "✅ تم تجهيز البناء"
 
-    # ========================================
-    # 7. البناء الفعلي (استخدام جميع أنوية المعالج)
-    # ========================================
+    # البناء الفعلي
     - name: بدء البناء (قد يستغرق 20-30 دقيقة)
       run: |
         cd build
         ninja -j$(sysctl -n hw.ncpu)
-        echo "✅ انتهى البناء بنجاح"
+        echo "✅ انتهى البناء"
 
-    # ========================================
-    # 8. البحث عن ملف التطبيق .app
-    # ========================================
+    # البحث عن ملف .app
     - name: البحث عن ملف التطبيق .app
       run: |
         APP_PATH=$(find build -name "*.app" -type d | head -n 1)
         if [ -z "$APP_PATH" ]; then
-          echo "❌ لم يتم العثور على ملف .app"
-          echo "🔍 جارٍ البحث في مجلد build..."
+          echo "❌ لم يتم العثور على .app"
           find build -type d -name "*.app"
           exit 1
         fi
         echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-        echo "✅ تم العثور على التطبيق في: $APP_PATH"
+        echo "✅ تم العثور على التطبيق"
 
-    # ========================================
-    # 9. إنشاء مجلد Payload وضغطه إلى IPA
-    # ========================================
+    # إنشاء Payload وضغطها
     - name: إنشاء مجلد Payload وضغطه
       run: |
         mkdir -p Payload
         cp -R "$APP_PATH" Payload/
         zip -r Play.ipa Payload
-        echo "✅ تم إنشاء ملف Play.ipa بنجاح"
+        echo "✅ تم إنشاء Play.ipa"
 
-    # ========================================
-    # 10. رفع ملف IPA للتحميل
-    # ========================================
-    - name: رفع ملف IPA الناتج للتحميل
+    # رفع الـ IPA
+    - name: رفع ملف IPA للتحميل
       uses: actions/upload-artifact@v4
       with:
         name: Play-iOS-IPA
