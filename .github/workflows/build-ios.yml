@@ -1,0 +1,47 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:  # يتيح لك تشغيل البناء يدوياً بالضغط على زر
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+    - name: استنساخ الكود مع المكتبات الفرعية
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: تثبيت أدوات البناء
+      run: |
+        brew install cmake ninja
+        sudo xcode-select --switch /Applications/Xcode.app
+
+    - name: تجهيز البناء (Configure)
+      run: |
+        mkdir -p build
+        cd build
+        cmake -DIOS=ON -G Ninja -DCMAKE_BUILD_TYPE=Release ..
+
+    - name: بدء البناء (قد يستغرق 20-30 دقيقة)
+      run: |
+        cd build
+        ninja
+
+    - name: البحث عن ملف التطبيق .app
+      run: |
+        APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+        echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+        echo "تم العثور على التطبيق في: $APP_PATH"
+
+    - name: إنشاء مجلد Payload وضغطه
+      run: |
+        mkdir -p Payload
+        cp -R "$APP_PATH" Payload/
+        zip -r Play.ipa Payload
+
+    - name: رفع ملف IPA الناتج للتحميل
+      uses: actions/upload-artifact@v4
+      with:
+        name: Play-iOS-IPA
+        path: Play.ipa
