@@ -37,18 +37,19 @@ jobs:
         echo "SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_ENV
         echo "CMAKE_PREFIX_PATH=/opt/homebrew" >> $GITHUB_ENV
 
-    # =============================================
-    # 🔥 الحل الجذري: حذف مجلد ui_qt بالكامل من البناء
-    # =============================================
-    - name: تعطيل واجهة Qt عن طريق تعديل CMakeLists.txt
+    # ==================================================
+    # 🔥 تعطيل جميع الأدوات (tools) التي تعتمد على Qt
+    # ==================================================
+    - name: تعطيل بناء الأدوات (Tools) التي تحتاج Qt
       run: |
-        # حذف السطر الذي يحتوي على "ui_qt" من الملف الرئيسي
-        sed -i '' '/ui_qt/d' CMakeLists.txt
-        # حذف مجلد ui_qt نفسه (احتياطي)
-        rm -rf Source/ui_qt
-        echo "✅ تم حذف مجلد ui_qt وتعطيله نهائياً"
+        # حذف مجلد tools بالكامل (لأننا لا نحتاجها على iOS)
+        rm -rf tools
+        # حذف أي إشارة إلى الأدوات في CMakeLists.txt الرئيسي
+        sed -i '' '/add_subdirectory(tools)/d' CMakeLists.txt
+        sed -i '' '/add_subdirectory(Tools)/d' CMakeLists.txt
+        echo "✅ تم تعطيل جميع الأدوات بنجاح"
 
-    # تجهيز البناء مع تعطيل Qt بكل الطرق الممكنة
+    # تجهيز البناء مع تعطيل Qt تماماً
     - name: تجهيز البناء (Configure)
       run: |
         mkdir -p build
@@ -67,6 +68,8 @@ jobs:
           -DBUILD_QT_UI=OFF \
           -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE \
           -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE \
+          -DBUILD_TOOLS=OFF \
+          -DBUILD_TESTS=OFF \
           -DUSE_OPENGL=OFF \
           -DUSE_OPENGLES=ON \
           -DUSE_VULKAN=OFF \
@@ -96,11 +99,12 @@ jobs:
         APP_PATH=$(find build -name "*.app" -type d | head -n 1)
         if [ -z "$APP_PATH" ]; then
           echo "❌ لم يتم العثور على .app"
+          echo "🔍 البحث في build..."
           find build -type d -name "*.app"
           exit 1
         fi
         echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-        echo "✅ تم العثور على التطبيق"
+        echo "✅ تم العثور على التطبيق في: $APP_PATH"
 
     # إنشاء Payload وضغطها
     - name: إنشاء مجلد Payload وضغطه
