@@ -37,19 +37,24 @@ jobs:
         echo "SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_ENV
         echo "CMAKE_PREFIX_PATH=/opt/homebrew" >> $GITHUB_ENV
 
-    # ==================================================
-    # 🔥 تعطيل جميع الأدوات (tools) التي تعتمد على Qt
-    # ==================================================
-    - name: تعطيل بناء الأدوات (Tools) التي تحتاج Qt
+    # ======================================================
+    # 🔥 حذف كل ما يتعلق بـ Qt قبل البناء (حل جذري)
+    # ======================================================
+    - name: تعطيل Qt نهائياً عن طريق حذف المجلدات والمراجع
       run: |
-        # حذف مجلد tools بالكامل (لأننا لا نحتاجها على iOS)
+        # 1. حذف مجلدات Qt المتعلقة بالواجهة والأدوات
+        rm -rf Source/ui_qt
         rm -rf tools
-        # حذف أي إشارة إلى الأدوات في CMakeLists.txt الرئيسي
-        sed -i '' '/add_subdirectory(tools)/d' CMakeLists.txt
-        sed -i '' '/add_subdirectory(Tools)/d' CMakeLists.txt
-        echo "✅ تم تعطيل جميع الأدوات بنجاح"
 
-    # تجهيز البناء مع تعطيل Qt تماماً
+        # 2. حذف أي سطر يحتوي على "ui_qt" أو "QT_" من CMakeLists.txt
+        sed -i '' '/ui_qt/d' CMakeLists.txt
+        sed -i '' '/QT_/d' CMakeLists.txt
+        sed -i '' '/add_subdirectory(tools)/d' CMakeLists.txt
+
+        # 3. تأكيد الحذف (اختياري)
+        echo "✅ تم حذف مجلدات ui_qt و tools وجميع مراجع Qt"
+
+    # تجهيز البناء مع تعطيل Qt بكل الطرق الممكنة
     - name: تجهيز البناء (Configure)
       run: |
         mkdir -p build
@@ -99,12 +104,11 @@ jobs:
         APP_PATH=$(find build -name "*.app" -type d | head -n 1)
         if [ -z "$APP_PATH" ]; then
           echo "❌ لم يتم العثور على .app"
-          echo "🔍 البحث في build..."
           find build -type d -name "*.app"
           exit 1
         fi
         echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-        echo "✅ تم العثور على التطبيق في: $APP_PATH"
+        echo "✅ تم العثور على التطبيق"
 
     # إنشاء Payload وضغطها
     - name: إنشاء مجلد Payload وضغطه
