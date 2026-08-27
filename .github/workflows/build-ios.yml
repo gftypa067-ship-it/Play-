@@ -3,125 +3,485 @@ name: Build iOS IPA
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 120
+
+    env:
+      MIN_IOS_VERSION: "13.0"
+
     steps:
-    # تنظيف البناء القديم
-    - name: تنظيف مجلد البناء القديم
-      run: |
-        rm -rf build
-        rm -rf Payload
-        rm -f Play.ipa
 
-    # استنساخ الكود مع المكتبات الفرعية
-    - name: استنساخ الكود مع المكتبات الفرعية
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
+      # ============================================================
+      # 1. تنظيف البيئة
+      # ============================================================
+      - name: تنظيف ملفات البناء القديمة
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    # تثبيت الأدوات والمكتبات
-    - name: تثبيت أدوات البناء والمكتبات الأساسية
-      run: |
-        brew update
-        brew install cmake ninja pkg-config
-        brew install sdl2 glew glm libpng zlib libogg libvorbis freetype
-        brew install ffmpeg@6
-        echo "✅ تم تثبيت جميع المكتبات"
+          echo "🧹 تنظيف ملفات البناء القديمة..."
 
-    # تجهيز متغيرات البيئة
-    - name: تجهيز متغيرات البيئة
-      run: |
-        echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> $GITHUB_ENV
-        echo "SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_ENV
-        echo "CMAKE_PREFIX_PATH=/opt/homebrew" >> $GITHUB_ENV
+          rm -rf build
+          rm -rf Payload
+          rm -f Play.ipa
 
-    # ======================================================
-    # 🔥 حذف كل ما يتعلق بـ Qt قبل البناء (حل جذري)
-    # ======================================================
-    - name: تعطيل Qt نهائياً عن طريق حذف المجلدات والمراجع
-      run: |
-        # 1. حذف مجلدات Qt المتعلقة بالواجهة والأدوات
-        rm -rf Source/ui_qt
-        rm -rf tools
+          echo "✅ تم التنظيف"
 
-        # 2. حذف أي سطر يحتوي على "ui_qt" أو "QT_" من CMakeLists.txt
-        sed -i '' '/ui_qt/d' CMakeLists.txt
-        sed -i '' '/QT_/d' CMakeLists.txt
-        sed -i '' '/add_subdirectory(tools)/d' CMakeLists.txt
 
-        # 3. تأكيد الحذف (اختياري)
-        echo "✅ تم حذف مجلدات ui_qt و tools وجميع مراجع Qt"
+      # ============================================================
+      # 2. تحميل المشروع
+      # ============================================================
+      - name: استنساخ المشروع مع Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    # تجهيز البناء مع تعطيل Qt بكل الطرق الممكنة
-    - name: تجهيز البناء (Configure)
-      run: |
-        mkdir -p build
-        cd build
-        cmake .. \
-          -G Ninja \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DIOS=ON \
-          -DCMAKE_OSX_SYSROOT=iphoneos \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-          -DCMAKE_PREFIX_PATH=/opt/homebrew \
-          -DCMAKE_C_COMPILER=$(xcrun --sdk iphoneos --find clang) \
-          -DCMAKE_CXX_COMPILER=$(xcrun --sdk iphoneos --find clang++) \
-          -DUSE_QT=OFF \
-          -DENABLE_QT=OFF \
-          -DBUILD_QT_UI=OFF \
-          -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE \
-          -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE \
-          -DBUILD_TOOLS=OFF \
-          -DBUILD_TESTS=OFF \
-          -DUSE_OPENGL=OFF \
-          -DUSE_OPENGLES=ON \
-          -DUSE_VULKAN=OFF \
-          -DUSE_LIBUSB=OFF \
-          -DUSE_BLUETOOTH=OFF \
-          -DUSE_DISCORD_RPC=OFF \
-          -DUSE_SDL2=ON \
-          -DSDL2_INCLUDE_DIR=/opt/homebrew/include \
-          -DSDL2_LIBRARY=/opt/homebrew/lib/libSDL2.dylib \
-          -DOPENGL_INCLUDE_DIR=/opt/homebrew/include \
-          -DFFMPEG_DIR=/opt/homebrew/opt/ffmpeg@6 \
-          -DCMAKE_C_FLAGS="-arch arm64 -miphoneos-version-min=13.0" \
-          -DCMAKE_CXX_FLAGS="-arch arm64 -miphoneos-version-min=13.0" \
-          -DCMAKE_EXE_LINKER_FLAGS="-arch arm64 -miphoneos-version-min=13.0"
-        echo "✅ تم تجهيز البناء"
 
-    # البناء الفعلي
-    - name: بدء البناء (قد يستغرق 20-30 دقيقة)
-      run: |
-        cd build
-        ninja -j$(sysctl -n hw.ncpu)
-        echo "✅ انتهى البناء"
+      # ============================================================
+      # 3. فحص المشروع و CMakeLists
+      # ============================================================
+      - name: فحص ملفات المشروع
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    # البحث عن ملف .app
-    - name: البحث عن ملف التطبيق .app
-      run: |
-        APP_PATH=$(find build -name "*.app" -type d | head -n 1)
-        if [ -z "$APP_PATH" ]; then
-          echo "❌ لم يتم العثور على .app"
-          find build -type d -name "*.app"
-          exit 1
-        fi
-        echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-        echo "✅ تم العثور على التطبيق"
+          echo "📁 المسار الحالي:"
+          pwd
 
-    # إنشاء Payload وضغطها
-    - name: إنشاء مجلد Payload وضغطه
-      run: |
-        mkdir -p Payload
-        cp -R "$APP_PATH" Payload/
-        zip -r Play.ipa Payload
-        echo "✅ تم إنشاء Play.ipa"
+          echo ""
+          echo "📦 محتويات المشروع:"
+          ls -la
 
-    # رفع الـ IPA
-    - name: رفع ملف IPA للتحميل
-      uses: actions/upload-artifact@v4
-      with:
-        name: Play-iOS-IPA
-        path: Play.ipa
-        if-no-files-found: error
+          echo ""
+          echo "🔍 البحث عن CMakeLists.txt:"
+          find . -name "CMakeLists.txt" -print
+
+          if [ ! -f "CMakeLists.txt" ]; then
+            echo "❌ لم يتم العثور على CMakeLists.txt في جذر المشروع"
+            exit 1
+          fi
+
+          echo ""
+          echo "📂 حالة مجلد tools:"
+          if [ -d "tools" ]; then
+            echo "✅ tools موجود"
+            find tools -maxdepth 2 -type d | head -50
+          else
+            echo "⚠️ مجلد tools غير موجود"
+          fi
+
+          echo ""
+          echo "📂 حالة مجلد Source:"
+          if [ -d "Source" ]; then
+            echo "✅ Source موجود"
+          else
+            echo "⚠️ Source غير موجود"
+          fi
+
+
+      # ============================================================
+      # 4. تحديث Git Submodules مرة إضافية
+      # ============================================================
+      - name: التأكد من تحميل جميع Submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+          echo "📦 حالة Submodules:"
+          git submodule status --recursive || true
+
+
+      # ============================================================
+      # 5. تثبيت Homebrew dependencies
+      # ============================================================
+      - name: تثبيت أدوات البناء والمكتبات
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🍺 تحديث Homebrew..."
+          brew update
+
+          echo "🛠️ تثبيت أدوات البناء..."
+          brew install cmake ninja pkg-config || true
+
+          echo "📚 تثبيت المكتبات..."
+          brew install \
+            sdl2 \
+            glew \
+            glm \
+            libpng \
+            zlib \
+            libogg \
+            libvorbis \
+            freetype \
+            ffmpeg || true
+
+          echo ""
+          echo "📌 CMake:"
+          cmake --version
+
+          echo ""
+          echo "📌 Ninja:"
+          ninja --version
+
+          echo ""
+          echo "📌 Compiler:"
+          xcrun --find clang
+          xcrun --find clang++
+
+          echo ""
+          echo "📌 Homebrew prefix:"
+          brew --prefix
+
+
+      # ============================================================
+      # 6. إعداد Xcode و iOS SDK
+      # ============================================================
+      - name: تجهيز Xcode و iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🛠️ اختيار Xcode..."
+
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+          xcodebuild -version
+
+          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "IOS_SDK=$IOS_SDK" >> "$GITHUB_ENV"
+
+          echo "📱 iOS SDK:"
+          echo "$IOS_SDK"
+
+          if [ ! -d "$IOS_SDK" ]; then
+            echo "❌ iOS SDK غير موجود"
+            exit 1
+          fi
+
+
+      # ============================================================
+      # 7. إعداد Homebrew paths تلقائياً
+      # ============================================================
+      - name: تجهيز متغيرات البيئة
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BREW_PREFIX="$(brew --prefix)"
+
+          echo "BREW_PREFIX=$BREW_PREFIX" >> "$GITHUB_ENV"
+
+          echo "PKG_CONFIG_PATH=$BREW_PREFIX/lib/pkgconfig:$BREW_PREFIX/share/pkgconfig" >> "$GITHUB_ENV"
+
+          echo "CMAKE_PREFIX_PATH=$BREW_PREFIX" >> "$GITHUB_ENV"
+
+          echo "SDL2_INCLUDE_DIR=$BREW_PREFIX/include" >> "$GITHUB_ENV"
+          echo "SDL2_LIBRARY=$BREW_PREFIX/lib/libSDL2.dylib" >> "$GITHUB_ENV"
+
+          echo "FFMPEG_PREFIX=$BREW_PREFIX" >> "$GITHUB_ENV"
+
+          echo "PATH=$BREW_PREFIX/bin:$PATH" >> "$GITHUB_ENV"
+
+          echo "🍺 BREW_PREFIX: $BREW_PREFIX"
+          echo "📦 PKG_CONFIG_PATH: $BREW_PREFIX/lib/pkgconfig"
+
+
+      # ============================================================
+      # 8. تعطيل Qt بأمان
+      #
+      # ملاحظة مهمة:
+      # لا نحذف tools
+      # لأن المشروع يحتوي على:
+      # tools/ElfView
+      # tools/DiscChecker
+      # tools/NamcoSys147NANDTools
+      #
+      # وحذف tools كان سبب الخطأ السابق.
+      # ============================================================
+      - name: تجهيز المشروع بدون حذف الملفات المطلوبة
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔧 البحث عن إعدادات Qt..."
+
+          echo ""
+          echo "=== المراجع المتعلقة بـ Qt ==="
+
+          grep -RniE \
+            "ui_qt|Qt5|Qt6|USE_QT|ENABLE_QT|BUILD_QT" \
+            CMakeLists.txt \
+            Source \
+            cmake \
+            2>/dev/null \
+            || true
+
+          echo ""
+          echo "⚠️ لن يتم حذف tools"
+          echo "⚠️ لن يتم حذف tools/ElfView"
+          echo "⚠️ لن يتم حذف tools/DiscChecker"
+          echo "⚠️ لن يتم حذف tools/NamcoSys147NANDTools"
+          echo ""
+          echo "سيتم تعطيل Qt من خيارات CMake فقط."
+
+
+      # ============================================================
+      # 9. عرض add_subdirectory قبل البناء
+      # ============================================================
+      - name: فحص add_subdirectory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 جميع add_subdirectory في CMakeLists.txt:"
+          grep -nE "^[[:space:]]*add_subdirectory" CMakeLists.txt || true
+
+          echo ""
+          echo "📂 التحقق من المجلدات المطلوبة..."
+
+          while IFS= read -r line; do
+            echo "$line"
+          done < <(
+            grep -nE "add_subdirectory" CMakeLists.txt || true
+          )
+
+          echo ""
+          echo "✅ انتهى الفحص"
+
+
+      # ============================================================
+      # 10. إعداد CMake
+      # ============================================================
+      - name: تجهيز البناء Configure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p build
+
+          cd build
+
+          echo "🔨 بدء CMake..."
+
+          cmake .. \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS_VERSION" \
+            -DCMAKE_PREFIX_PATH="$BREW_PREFIX" \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_C_COMPILER="$(xcrun --sdk iphoneos --find clang)" \
+            -DCMAKE_CXX_COMPILER="$(xcrun --sdk iphoneos --find clang++) \
+            -DIOS=ON \
+            -DBUILD_IOS=ON \
+            -DTARGET_IOS=ON \
+            -DUSE_QT=OFF \
+            -DENABLE_QT=OFF \
+            -DBUILD_QT=OFF \
+            -DBUILD_QT_UI=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE \
+            -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DUSE_OPENGL=OFF \
+            -DUSE_OPENGLES=ON \
+            -DUSE_VULKAN=OFF \
+            -DUSE_LIBUSB=OFF \
+            -DUSE_BLUETOOTH=OFF \
+            -DUSE_DISCORD_RPC=OFF \
+            -DUSE_SDL2=ON \
+            -DSDL2_INCLUDE_DIR="$SDL2_INCLUDE_DIR" \
+            -DSDL2_LIBRARY="$SDL2_LIBRARY" \
+            -DFFMPEG_DIR="$FFMPEG_PREFIX" \
+            -DCMAKE_C_FLAGS="-arch arm64 -miphoneos-version-min=$MIN_IOS_VERSION" \
+            -DCMAKE_CXX_FLAGS="-arch arm64 -miphoneos-version-min=$MIN_IOS_VERSION" \
+            -DCMAKE_EXE_LINKER_FLAGS="-arch arm64 -miphoneos-version-min=$MIN_IOS_VERSION"
+
+          echo ""
+          echo "✅ انتهى Configure بنجاح"
+
+
+      # ============================================================
+      # 11. عرض CMake Cache
+      # ============================================================
+      - name: فحص إعدادات CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "build/CMakeCache.txt" ]; then
+            echo "❌ CMakeCache.txt غير موجود"
+            exit 1
+          fi
+
+          echo "=== أهم إعدادات CMake ==="
+
+          grep -E \
+            "CMAKE_OSX_ARCHITECTURES|CMAKE_OSX_SYSROOT|CMAKE_OSX_DEPLOYMENT_TARGET|CMAKE_SYSTEM_NAME|USE_QT|BUILD_QT|IOS" \
+            build/CMakeCache.txt \
+            || true
+
+
+      # ============================================================
+      # 12. البناء
+      # ============================================================
+      - name: بدء البناء
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CPU_COUNT="$(sysctl -n hw.ncpu)"
+
+          echo "🖥️ عدد المعالجات: $CPU_COUNT"
+          echo "🔨 بدء Ninja..."
+
+          cmake --build build \
+            --parallel "$CPU_COUNT"
+
+          echo ""
+          echo "🎉 انتهى البناء بنجاح"
+
+
+      # ============================================================
+      # 13. البحث عن ملفات التطبيق
+      # ============================================================
+      - name: البحث عن التطبيق
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 البحث عن ملفات .app..."
+
+          find build -type d -name "*.app" -print || true
+
+          APP_PATH="$(find build -type d -name "*.app" -print | head -n 1 || true)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ لم يتم العثور على أي ملف .app"
+            echo ""
+            echo "📂 محتويات build:"
+            find build -maxdepth 4 -type f | head -200 || true
+            exit 1
+          fi
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+          echo "📱 التطبيق:"
+          echo "$APP_PATH"
+
+
+      # ============================================================
+      # 14. فحص التطبيق قبل إنشاء IPA
+      # ============================================================
+      - name: فحص التطبيق
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 فحص Info.plist..."
+
+          if [ -f "$APP_PATH/Info.plist" ]; then
+            echo "✅ Info.plist موجود"
+          else
+            echo "⚠️ Info.plist غير موجود"
+          fi
+
+          echo ""
+          echo "📂 محتويات التطبيق:"
+          find "$APP_PATH" -maxdepth 2 -print | head -100
+
+
+      # ============================================================
+      # 15. إنشاء IPA
+      # ============================================================
+      - name: إنشاء IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf Payload
+          rm -f Play.ipa
+
+          mkdir -p Payload
+
+          cp -R "$APP_PATH" Payload/
+
+          echo "📦 إنشاء Play.ipa..."
+
+          ditto -c -k \
+            --sequesterRsrc \
+            --keepParent \
+            Payload \
+            Play.ipa
+
+          if [ ! -f "Play.ipa" ]; then
+            echo "❌ فشل إنشاء Play.ipa"
+            exit 1
+          fi
+
+          echo ""
+          echo "📦 حجم IPA:"
+          ls -lh Play.ipa
+
+          echo "🎉 تم إنشاء Play.ipa"
+
+
+      # ============================================================
+      # 16. فحص IPA
+      # ============================================================
+      - name: فحص ملف IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "🔍 فحص محتويات IPA..."
+
+          unzip -l Play.ipa | head -100
+
+          if ! unzip -l Play.ipa | grep -q "Payload/"; then
+            echo "❌ IPA لا يحتوي على Payload"
+            exit 1
+          fi
+
+          echo "✅ IPA صالح من ناحية البنية"
+
+
+      # ============================================================
+      # 17. رفع IPA
+      # ============================================================
+      - name: رفع IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Play-iOS-IPA
+          path: Play.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+
+      # ============================================================
+      # 18. رفع ملفات التشخيص في حالة الفشل
+      # ============================================================
+      - name: رفع سجلات البناء عند حدوث خطأ
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Build-Debug-Logs
+          path: |
+            build/CMakeCache.txt
+            build/CMakeFiles
+          if-no-files-found: ignore
+          retention-days: 7
