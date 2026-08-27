@@ -13,6 +13,7 @@ jobs:
 
     env:
       MIN_IOS_VERSION: "13.0"
+      GLES_SILENCE_DEPRECATION: "1"
 
     steps:
 
@@ -27,7 +28,7 @@ jobs:
 
 
       # ==========================================================
-      # 2. تحديث جميع Submodules
+      # 2. تحديث Submodules
       # ==========================================================
       - name: Update Submodules
         shell: bash
@@ -42,7 +43,7 @@ jobs:
 
 
       # ==========================================================
-      # 3. تنظيف البناء القديم
+      # 3. تنظيف الملفات القديمة
       # ==========================================================
       - name: Clean Old Build
         shell: bash
@@ -64,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Current directory:"
+          echo "=== Current Directory ==="
           pwd
 
           echo ""
@@ -76,24 +77,12 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "CMakeLists.txt found"
 
           echo ""
-          echo "=== CMake Files ==="
+          echo "=== All CMakeLists.txt Files ==="
           find . -name "CMakeLists.txt" -print
-
-          echo ""
-          echo "=== Source Directories ==="
-          find Source -maxdepth 2 -type d 2>/dev/null || true
-
-          echo ""
-          echo "=== Tools Directories ==="
-
-          if [ -d "tools" ]; then
-            find tools -maxdepth 2 -type d | head -100
-          else
-            echo "tools directory not found"
-          fi
 
 
       # ==========================================================
@@ -127,9 +116,6 @@ jobs:
           echo "=== Ninja ==="
           ninja --version
 
-          echo ""
-          echo "Build tools installed successfully"
-
 
       # ==========================================================
       # 6. تجهيز Xcode و iOS SDK
@@ -154,21 +140,6 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "$CLANG_PATH" ]; then
-            echo "ERROR: iOS clang not found"
-            exit 1
-          fi
-
-          if [ ! -f "$CLANGXX_PATH" ]; then
-            echo "ERROR: iOS clang++ not found"
-            exit 1
-          fi
-
-          if [ ! -f "$SWIFTC_PATH" ]; then
-            echo "ERROR: Swift compiler not found"
-            exit 1
-          fi
-
           echo "IOS_SDK=$IOS_SDK" >> "$GITHUB_ENV"
           echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
           echo "CLANGXX_PATH=$CLANGXX_PATH" >> "$GITHUB_ENV"
@@ -182,7 +153,6 @@ jobs:
           echo "Swift: $SWIFTC_PATH"
 
           echo ""
-          echo "=== Swift Version ==="
           "$SWIFTC_PATH" --version
 
 
@@ -197,6 +167,7 @@ jobs:
           BREW_PREFIX="$(brew --prefix)"
 
           echo "BREW_PREFIX=$BREW_PREFIX" >> "$GITHUB_ENV"
+
           echo "CMAKE_PREFIX_PATH=$BREW_PREFIX" >> "$GITHUB_ENV"
 
           echo "PKG_CONFIG_PATH=$BREW_PREFIX/lib/pkgconfig:$BREW_PREFIX/share/pkgconfig" >> "$GITHUB_ENV"
@@ -204,17 +175,15 @@ jobs:
           echo "SDL2_INCLUDE_DIR=$BREW_PREFIX/include" >> "$GITHUB_ENV"
           echo "SDL2_LIBRARY=$BREW_PREFIX/lib/libSDL2.dylib" >> "$GITHUB_ENV"
 
-          echo "BREW_PREFIX:"
-          echo "$BREW_PREFIX"
+          echo "PATH=$BREW_PREFIX/bin:$PATH" >> "$GITHUB_ENV"
 
           echo ""
-          echo "SDL2:"
-          ls -la "$BREW_PREFIX/lib/libSDL2.dylib" || true
+          echo "=== Homebrew ==="
+          echo "Prefix: $BREW_PREFIX"
 
 
       # ==========================================================
-      # 8. فحص CMake
-      # لا نحذف tools
+      # 8. فحص CMake والمجلدات
       # ==========================================================
       - name: Check CMake Directories
         shell: bash
@@ -223,33 +192,33 @@ jobs:
 
           echo "=== add_subdirectory Entries ==="
 
-          grep -nE "^[[:space:]]*add_subdirectory" CMakeLists.txt || true
-
-          echo ""
-          echo "=== Project iOS UI ==="
-
-          if [ -d "Source/ui_ios" ]; then
-            echo "Source/ui_ios exists"
-
-            find Source/ui_ios -maxdepth 3 -type f | head -100
-          else
-            echo "WARNING: Source/ui_ios not found"
-          fi
-
-          echo ""
-          echo "=== Qt Entries ==="
-
-          grep -RniE \
-            "Qt5|Qt6|USE_QT|ENABLE_QT|BUILD_QT" \
-            CMakeLists.txt \
-            Source \
-            cmake \
-            2>/dev/null \
+          grep -Rni "add_subdirectory" \
+            --include="CMakeLists.txt" \
+            . \
             || true
 
           echo ""
-          echo "IMPORTANT:"
-          echo "The tools directory will NOT be deleted."
+          echo "=== ui_ios ==="
+
+          if [ -d "Source/ui_ios" ]; then
+            echo "Source/ui_ios found"
+            find Source/ui_ios -maxdepth 3 -type f | head -100
+          else
+            echo "Source/ui_ios not found"
+          fi
+
+          echo ""
+          echo "=== tools ==="
+
+          if [ -d "tools" ]; then
+            echo "tools found"
+            find tools -maxdepth 2 -type d | head -100
+          else
+            echo "tools not found"
+          fi
+
+          echo ""
+          echo "IMPORTANT: No project directories are deleted."
 
 
       # ==========================================================
@@ -265,50 +234,87 @@ jobs:
 
           cd build
 
-          echo "Starting CMake configuration for iOS"
+          echo "=================================="
+          echo "Starting CMake configuration"
+          echo "Target: arm64-apple-ios${MIN_IOS_VERSION}"
+          echo "=================================="
 
-          cmake .. \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DIOS=ON \
-            -DBUILD_IOS=ON \
-            -DTARGET_IOS=ON \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS_VERSION" \
-            -DCMAKE_PREFIX_PATH="$BREW_PREFIX" \
-            -DCMAKE_C_COMPILER="$CLANG_PATH" \
-            -DCMAKE_CXX_COMPILER="$CLANGXX_PATH" \
-            -DCMAKE_Swift_COMPILER="$SWIFTC_PATH" \
-            -DCMAKE_Swift_COMPILER_TARGET="arm64-apple-ios${MIN_IOS_VERSION}" \
-            -DCMAKE_Swift_FLAGS="-target arm64-apple-ios${MIN_IOS_VERSION}" \
-            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-            -DUSE_QT=OFF \
-            -DENABLE_QT=OFF \
-            -DBUILD_QT=OFF \
-            -DBUILD_QT_UI=OFF \
-            -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE \
-            -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE \
-            -DBUILD_TESTS=OFF \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_EXAMPLES=OFF \
-            -DUSE_OPENGL=OFF \
-            -DUSE_OPENGLES=ON \
-            -DUSE_VULKAN=OFF \
-            -DUSE_LIBUSB=OFF \
-            -DUSE_BLUETOOTH=OFF \
-            -DUSE_DISCORD_RPC=OFF \
-            -DUSE_SDL2=ON \
-            -DSDL2_INCLUDE_DIR="$SDL2_INCLUDE_DIR" \
-            -DSDL2_LIBRARY="$SDL2_LIBRARY"
+          CMAKE_ARGS=(
+            ..
+
+            -G
+            Ninja
+
+            -DCMAKE_BUILD_TYPE=Release
+
+            -DIOS=ON
+            -DBUILD_IOS=ON
+            -DTARGET_IOS=ON
+
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+            -DCMAKE_OSX_SYSROOT=$IOS_SDK
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN_IOS_VERSION
+
+            -DCMAKE_PREFIX_PATH=$BREW_PREFIX
+
+            -DCMAKE_C_COMPILER=$CLANG_PATH
+            -DCMAKE_CXX_COMPILER=$CLANGXX_PATH
+            -DCMAKE_Swift_COMPILER=$SWIFTC_PATH
+
+            -DCMAKE_Swift_COMPILER_TARGET=arm64-apple-ios$MIN_IOS_VERSION
+            -DCMAKE_Swift_FLAGS=-target\ arm64-apple-ios$MIN_IOS_VERSION
+
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
+
+            -DCMAKE_C_FLAGS=-DGLES_SILENCE_DEPRECATION=1\ -Wno-deprecated-declarations\ -Wno-error=deprecated-declarations\ -Wno-error
+
+            -DCMAKE_CXX_FLAGS=-DGLES_SILENCE_DEPRECATION=1\ -Wno-deprecated-declarations\ -Wno-error=deprecated-declarations\ -Wno-error
+
+            -DCMAKE_OBJC_FLAGS=-DGLES_SILENCE_DEPRECATION=1\ -Wno-deprecated-declarations\ -Wno-error=deprecated-declarations\ -Wno-error
+
+            -DCMAKE_OBJCXX_FLAGS=-DGLES_SILENCE_DEPRECATION=1\ -Wno-deprecated-declarations\ -Wno-error=deprecated-declarations\ -Wno-error
+
+            -DUSE_QT=OFF
+            -DENABLE_QT=OFF
+            -DBUILD_QT=OFF
+            -DBUILD_QT_UI=OFF
+
+            -DCMAKE_DISABLE_FIND_PACKAGE_Qt5=TRUE
+            -DCMAKE_DISABLE_FIND_PACKAGE_Qt6=TRUE
+
+            -DBUILD_TESTS=OFF
+            -DBUILD_TESTING=OFF
+            -DBUILD_EXAMPLES=OFF
+
+            -DUSE_OPENGL=OFF
+            -DUSE_OPENGLES=ON
+            -DUSE_VULKAN=OFF
+
+            -DUSE_LIBUSB=OFF
+            -DUSE_BLUETOOTH=OFF
+            -DUSE_DISCORD_RPC=OFF
+
+            -DUSE_SDL2=ON
+            -DSDL2_INCLUDE_DIR=$SDL2_INCLUDE_DIR
+            -DSDL2_LIBRARY=$SDL2_LIBRARY
+          )
+
+          echo ""
+          echo "=== CMake Arguments ==="
+
+          printf '%s\n' "${CMAKE_ARGS[@]}"
+
+          echo ""
+          echo "=== Running CMake ==="
+
+          cmake "${CMAKE_ARGS[@]}"
 
           echo ""
           echo "Configure completed successfully"
 
 
       # ==========================================================
-      # 10. فحص CMake Cache
+      # 10. فحص إعدادات CMake
       # ==========================================================
       - name: Check CMake Cache
         shell: bash
@@ -323,20 +329,20 @@ jobs:
           echo "=== Important CMake Settings ==="
 
           grep -Ei \
-            "CMAKE_SYSTEM_NAME|CMAKE_OSX_ARCHITECTURES|CMAKE_OSX_SYSROOT|CMAKE_OSX_DEPLOYMENT_TARGET|CMAKE_Swift|IOS|Qt" \
+            "CMAKE_SYSTEM_NAME|CMAKE_OSX_ARCHITECTURES|CMAKE_OSX_SYSROOT|CMAKE_OSX_DEPLOYMENT_TARGET|CMAKE_Swift|IOS|GLES" \
             build/CMakeCache.txt \
             || true
 
 
       # ==========================================================
-      # 11. التحقق من Target الخاص بـ Swift
+      # 11. فحص Swift Target
       # ==========================================================
       - name: Check Swift iOS Target
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "=== Swift Target ==="
+          echo "=== Swift Target Test ==="
 
           "$SWIFTC_PATH" \
             -target "arm64-apple-ios${MIN_IOS_VERSION}" \
@@ -344,7 +350,7 @@ jobs:
             -print-target-info
 
           echo ""
-          echo "Swift iOS target test completed"
+          echo "Swift iOS target is valid"
 
 
       # ==========================================================
@@ -357,12 +363,17 @@ jobs:
 
           CPU_COUNT="$(sysctl -n hw.ncpu)"
 
+          echo "=================================="
+          echo "Starting Build"
           echo "CPU Count: $CPU_COUNT"
+          echo "GLES_SILENCE_DEPRECATION: $GLES_SILENCE_DEPRECATION"
+          echo "=================================="
 
-          echo "Starting build..."
+          export GLES_SILENCE_DEPRECATION=1
 
           cmake --build build \
-            --parallel "$CPU_COUNT"
+            --parallel "$CPU_COUNT" \
+            --verbose
 
           echo ""
           echo "Build completed successfully"
@@ -376,7 +387,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Searching for .app"
+          echo "=== Searching for .app ==="
 
           find build -type d -name "*.app" -print || true
 
@@ -386,9 +397,9 @@ jobs:
             echo "ERROR: No .app was found"
 
             echo ""
-            echo "=== Build Files ==="
+            echo "=== Build Output ==="
 
-            find build -maxdepth 5 -print | head -300 || true
+            find build -maxdepth 6 -print | head -500 || true
 
             exit 1
           fi
@@ -408,9 +419,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=== Application ==="
+          echo "=== Application Files ==="
 
-          find "$APP_PATH" -maxdepth 2 -print | head -100
+          find "$APP_PATH" -maxdepth 3 -print | head -200
 
           echo ""
 
@@ -422,7 +433,7 @@ jobs:
 
 
       # ==========================================================
-      # 15. إنشاء Payload
+      # 15. إنشاء IPA
       # ==========================================================
       - name: Create IPA
         shell: bash
@@ -436,11 +447,14 @@ jobs:
 
           cp -R "$APP_PATH" Payload/
 
-          echo "Creating IPA..."
+          echo "=== Payload Contents ==="
 
-          cd Payload
-          zip -qry ../Play.ipa .
-          cd ..
+          find Payload -maxdepth 3 -print | head -100
+
+          echo ""
+          echo "Creating Play.ipa..."
+
+          zip -qry Play.ipa Payload
 
           if [ ! -f "Play.ipa" ]; then
             echo "ERROR: IPA creation failed"
@@ -448,7 +462,7 @@ jobs:
           fi
 
           echo ""
-          echo "IPA created:"
+          echo "IPA created successfully:"
           ls -lh Play.ipa
 
 
@@ -469,8 +483,13 @@ jobs:
             exit 1
           fi
 
+          if ! unzip -l Play.ipa | grep -q "\.app"; then
+            echo "ERROR: No .app found inside IPA"
+            exit 1
+          fi
+
           echo ""
-          echo "IPA verification completed"
+          echo "IPA verification completed successfully"
 
 
       # ==========================================================
@@ -486,7 +505,7 @@ jobs:
 
 
       # ==========================================================
-      # 18. رفع سجلات البناء عند الخطأ
+      # 18. رفع ملفات التشخيص إذا فشل البناء
       # ==========================================================
       - name: Upload Build Debug Files
         if: failure()
@@ -496,6 +515,7 @@ jobs:
           path: |
             build/CMakeCache.txt
             build/CMakeFiles
+            build/build.ninja
             build/*.log
           if-no-files-found: ignore
           retention-days: 7
